@@ -1,0 +1,56 @@
+name: PS5 Used Watch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/watch.yml"
+      - "watcher.py"
+      - "config.json"
+      - "requirements.txt"
+  schedule:
+    - cron: "0,30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ps5-used-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run watcher
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python watcher.py
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps5-used-watch-results
+          path: |
+            watch-results.json
+            seen.json
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Commit seen URLs
+        run: |
+          if [ -f seen.json ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add seen.json
+            git diff --cached --quiet || git commit -m "Update watched PS5 listings"
+            git push
+          fi
