@@ -15,5 +15,8 @@
     "PlayStation 5 本体 中古"
   ],
   "max_results_per_source": 30,
-  "request_timeout_seconds": 20
+  "request_timeout_seconds": 20,
+  "manual_urls": [
+    "https://auctions.yahoo.co.jp/jp/auction/1247708032"
+  ]
 }
