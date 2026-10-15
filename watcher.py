@@ -29,9 +29,9 @@ SOURCES = [
 JUNK = re.compile(r"ジャンク|故障|不動|起動しない|起動不可|HDMI.{0,5}(不良|故障)|部品取り|修理前提|動作未確認|未確認", re.I)
 SOLD = re.compile(r"売り切れ|sold\s*out|\bsold\b|取引完了|落札済み|オークション終了|販売終了|購入できません|出品を取り消し|削除されました|商品が見つかりません", re.I)
 BUY_MARKERS = {
-    "Yahoo Flea Market": re.compile(r"購入手続きへ|購入する|価格の相談", re.I),
+    "Yahoo Flea Market": re.compile(r"購入手続きへ|購入する", re.I),
     "Mercari": re.compile(r"購入手続きへ|購入する", re.I),
-    "Yahoo Auctions": re.compile(r"入札する|今すぐ落札|即決価格", re.I),
+    "Yahoo Auctions": re.compile(r"入札する|今すぐ落札", re.I),
     "Rakuma": re.compile(r"購入に進む|購入申請|購入手続き", re.I),
     "Hard Off": re.compile(r"カートに入れる|在庫あり", re.I),
     "Jimoty": re.compile(r"問い合わせ|投稿者にメール", re.I),
