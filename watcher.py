@@ -65,6 +65,9 @@ def parse_results(source_name, page_url, html, query):
         # First validate the listing title itself. Do not accept a PS4/PS Portal/
         # controller listing merely because a surrounding card or page mentions PS5.
         title_norm = " ".join(title.split())
+        # Exclude PS5-compatible accessories and the PlayStation Portal; they are not consoles.
+        if re.search(r"(リモートプレイヤー|PlayStation\\s*Portal|PS\\s*Portal|980\\s*PRO|M\\.?2\\s*SSD|SSD|DualSense|ゲームパッド|ヘッドセット|コントローラー単体|コントローラーのみ|本体カバー|本体ケース|縦置きスタンド)", title_norm, re.I):
+            continue
         console_title = bool(
             re.search(r"(PS\s*5|PlayStation\s*5|プレイステーション\s*5)", title_norm, re.I)
             and re.search(r"(本体|本体のみ|本体セット|本体\s*セット)", title_norm)
