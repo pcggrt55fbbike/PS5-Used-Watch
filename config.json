@@ -1,0 +1,14 @@
+{
+  "min_price": 20000,
+  "max_price": 29999,
+  "queries": [
+    "PS5 CFI-1000A 動作品",
+    "PS5 CFI-1000B デジタル 動作品",
+    "PS5 CFI-1100A 動作品",
+    "PS5 CFI-1100B デジタル 動作品",
+    "PS5 CFI-1200A 中古 動作品",
+    "PS5 本体 コントローラー付き 動作確認済み"
+  ],
+  "max_results_per_source": 30,
+  "request_timeout_seconds": 20
+}
