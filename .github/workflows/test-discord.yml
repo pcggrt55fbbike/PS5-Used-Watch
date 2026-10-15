@@ -1,6 +1,10 @@
 name: Discord Webhook Test
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/test-discord.yml"
   workflow_dispatch:
 
 jobs:
