@@ -66,9 +66,9 @@ def parse_results(source_name, page_url, html, query):
         # controller listing merely because a surrounding card or page mentions PS5.
         title_norm = " ".join(title.split())
         console_title = bool(
-            re.search(r"(PS\\s*5|PlayStation\\s*5|プレイステーション\\s*5)", title_norm, re.I)
-            and re.search(r"(本体|本体のみ|本体セット|本体\\s*セット)", title_norm)
-        ) or bool(re.search(r"\\bCFI[-ー ]?(?:1000|1100|1200)[AB]?\\b", title_norm, re.I))
+            re.search(r"(PS\s*5|PlayStation\s*5|プレイステーション\s*5)", title_norm, re.I)
+            and re.search(r"(本体|本体のみ|本体セット|本体\s*セット)", title_norm)
+        ) or bool(re.search(r"\bCFI[-ー ]?(?:1000|1100|1200)[AB]?\b", title_norm, re.I))
         if not console_title:
             continue
         combined = title_norm
