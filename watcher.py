@@ -62,16 +62,24 @@ def parse_results(source_name, page_url, html, query):
         href = urljoin(page_url, a.get("href", ""))
         if not title or len(title) < 5 or not href.startswith("http"):
             continue
-        combined = title
+        # First validate the listing title itself. Do not accept a PS4/PS Portal/
+        # controller listing merely because a surrounding card or page mentions PS5.
+        title_norm = " ".join(title.split())
+        console_title = bool(
+            re.search(r"(PS\\s*5|PlayStation\\s*5|プレイステーション\\s*5)", title_norm, re.I)
+            and re.search(r"(本体|本体のみ|本体セット|本体\\s*セット)", title_norm)
+        ) or bool(re.search(r"\\bCFI[-ー ]?(?:1000|1100|1200)[AB]?\\b", title_norm, re.I))
+        if not console_title:
+            continue
+        combined = title_norm
         parent = a
-        for _ in range(3):
+        for _ in range(2):
             if parent.parent:
                 parent = parent.parent
-                combined += " " + " ".join(parent.get_text(" ", strip=True).split())[:500]
+                combined += " " + " ".join(parent.get_text(" ", strip=True).split())[:350]
         combined = " ".join(combined.split())
-        if not PS5_RE.search(combined) and not MODEL_RE.search(combined):
-            continue
-        price = price_from(combined)
+        # Use the listing title price first; card text is fallback only after title validation.
+        price = price_from(title_norm) or price_from(combined)
         if price is None or not (MIN_PRICE <= price <= MAX_PRICE):
             continue
         url = normalize_url(href)
