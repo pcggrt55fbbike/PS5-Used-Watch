@@ -27,6 +27,15 @@ SOURCES = [
     ("Jimoty", "https://jmty.jp/all/sale?keyword={q}"),
 ]
 JUNK = re.compile(r"ジャンク|故障|不動|起動しない|起動不可|HDMI.{0,5}(不良|故障)|部品取り|修理前提|動作未確認|未確認", re.I)
+SOLD = re.compile(r"売り切れ|sold\s*out|\bsold\b|取引完了|落札済み|オークション終了|販売終了|購入できません|出品を取り消し|削除されました|商品が見つかりません", re.I)
+BUY_MARKERS = {
+    "Yahoo Flea Market": re.compile(r"購入手続きへ|購入する|価格の相談", re.I),
+    "Mercari": re.compile(r"購入手続きへ|購入する", re.I),
+    "Yahoo Auctions": re.compile(r"入札する|今すぐ落札|即決価格", re.I),
+    "Rakuma": re.compile(r"購入に進む|購入申請|購入手続き", re.I),
+    "Hard Off": re.compile(r"カートに入れる|在庫あり", re.I),
+    "Jimoty": re.compile(r"問い合わせ|投稿者にメール", re.I),
+}
 GOOD = re.compile(r"動作確認済|動作確認|完動品|正常動作|問題なく動作|動作品", re.I)
 PRICE_RE = re.compile(r"(?<!\d)(\d{1,3}(?:,\d{3})+|\d{4,6})\s*円?")
 PS5_RE = re.compile(r"\bPS\s*5\b|PlayStation\s*5|プレイステーション\s*5|CFI-?1[012]\d{2}", re.I)
@@ -81,6 +90,9 @@ def parse_results(source_name, page_url, html, query):
                 parent = parent.parent
                 combined += " " + " ".join(parent.get_text(" ", strip=True).split())[:350]
         combined = " ".join(combined.split())
+        # Search cards can retain sold listings; reject them before considering price.
+        if SOLD.search(combined):
+            continue
         # Use the listing title price first; card text is fallback only after title validation.
         price = price_from(title_norm) or price_from(combined)
         if price is None or not (MIN_PRICE <= price <= MAX_PRICE):
@@ -109,6 +121,31 @@ def parse_results(source_name, page_url, html, query):
         })
     results.sort(key=lambda x: (x["likely_junk_or_unverified"], -x["score"], x["price_yen"]))
     return results[:MAX_RESULTS]
+
+def verify_listing(item):
+    """Return active only when the item page explicitly looks purchasable."""
+    try:
+        response = SESSION.get(item["url"], timeout=TIMEOUT, allow_redirects=True)
+        item["availability_http_status"] = response.status_code
+        if response.status_code != 200:
+            item["availability"] = "unverified"
+            return False
+        soup = BeautifulSoup(response.text, "html.parser")
+        page_text = " ".join(soup.get_text(" ", strip=True).split())
+        item["page_title"] = (soup.title.get_text(" ", strip=True) if soup.title else "")[:180]
+        if SOLD.search(page_text) or SOLD.search(item["page_title"]):
+            item["availability"] = "sold_or_ended"
+            return False
+        marker = BUY_MARKERS.get(item["source"])
+        if marker and marker.search(page_text):
+            item["availability"] = "active_marker_found"
+            return True
+        item["availability"] = "unverified"
+        return False
+    except requests.RequestException as exc:
+        item["availability"] = "unverified"
+        item["availability_error"] = str(exc)[:160]
+        return False
 
 def load_seen():
     try:
@@ -155,20 +192,32 @@ def main():
         if key not in dedup or item["score"] > dedup[key]["score"]:
             dedup[key] = item
     results = sorted(dedup.values(), key=lambda x: (x["likely_junk_or_unverified"], -x["score"], x["price_yen"]))
-    new_items = [item for item in results if item["normalized_url"] not in seen]
+    # Verify every candidate at its detail page; never notify based on search cards alone.
+    active_items = []
+    for item in results:
+        if verify_listing(item):
+            active_items.append(item)
+        time.sleep(0.8)
+    new_items = [item for item in active_items if item["normalized_url"] not in seen]
     payload = {
         "checked_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "price_range_yen": [MIN_PRICE, MAX_PRICE],
         "candidate_count": len(results),
+        "verified_active_count": len(active_items),
         "new_candidate_count": len(new_items),
         "status": status,
         "candidates": results
     }
     RESULTS_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     send_discord(new_items)
-    seen.update(item["normalized_url"] for item in results)
+    seen.update(item["normalized_url"] for item in active_items)
     STATE_PATH.write_text(json.dumps(sorted(seen), ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"Candidates: {len(results)}; new: {len(new_items)}")
+    print(f"Candidates parsed: {len(results)}; verified active: {len(active_items)}; new active: {len(new_items)}")
+    availability_counts = {}
+    for item in results:
+        key = item.get("availability", "not_checked")
+        availability_counts[key] = availability_counts.get(key, 0) + 1
+    print("Availability checks: " + json.dumps(availability_counts, ensure_ascii=False))
     for item in results[:30]:
         print(f"¥{item['price_yen']:,} | {item['source']} | {item['title']} | {item['url']}")
     if not results:
