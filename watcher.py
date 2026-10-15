@@ -133,13 +133,37 @@ def verify_listing(item):
         soup = BeautifulSoup(response.text, "html.parser")
         page_text = " ".join(soup.get_text(" ", strip=True).split())
         item["page_title"] = (soup.title.get_text(" ", strip=True) if soup.title else "")[:180]
-        # Some marketplaces expose sold state only in HTML attributes / embedded JSON.
-        sold_html = re.search(
-            r"(sold.?out|sold_out|isSold|is_sold|soldOut|売り切れ|取引完了|オークション終了|出品終了|購入できません)",
-            response.text,
+        # Do not scan the entire raw HTML for words such as "soldOut":
+        # marketplace JavaScript bundles often contain generic status strings even
+        # for active listings. For Yahoo Auctions, inspect listing-specific heading,
+        # visible end-state notices, and actual bid controls instead.
+        heading = soup.find(["h1", "h2"])
+        heading_text = " ".join(heading.get_text(" ", strip=True).split()) if heading else ""
+        title_and_heading = f'{item["page_title"]} {heading_text}'
+        ended_notice = re.search(
+            r"(このオークションは終了|オークションは終了しました|出品者により取り消|出品が取り消されました|この商品は売り切れ|購入できません)",
+            page_text,
             re.I,
         )
-        if SOLD.search(page_text) or SOLD.search(item["page_title"]) or sold_html:
+        if item["source"] == "Yahoo Auctions":
+            if SOLD.search(title_and_heading) or ended_notice:
+                item["availability"] = "sold_or_ended"
+                return False
+            # Only count controls that appear in actionable buttons/links/forms,
+            # not generic site navigation or JavaScript text.
+            controls = " ".join(
+                " ".join(node.get_text(" ", strip=True).split()) + " " +
+                str(node.get("aria-label", "")) + " " + str(node.get("value", ""))
+                for node in soup.select("button, a, input[type=submit], input[type=button]")
+            )
+            if re.search(r"入札する|今すぐ落札|入札手続き", controls):
+                item["availability"] = "active_marker_found"
+                return True
+            item["availability"] = "unverified"
+            item["availability_note"] = "Yahoo Auctions page loaded, but no listing-specific bid control was found"
+            return False
+        # Other marketplaces: use visible text/title only; ignore generic raw-script markers.
+        if SOLD.search(page_text) or SOLD.search(item["page_title"]) or ended_notice:
             item["availability"] = "sold_or_ended"
             return False
         marker = BUY_MARKERS.get(item["source"])
@@ -152,6 +176,68 @@ def verify_listing(item):
         item["availability"] = "unverified"
         item["availability_error"] = str(exc)[:160]
         return False
+
+def fetch_manual_listing(url):
+    """Fetch a specifically configured listing even when search-page parsing misses it."""
+    item = {
+        "source": "Yahoo Auctions" if "auctions.yahoo.co.jp" in urlparse(url).netloc else "Manual URL",
+        "url": url,
+        "normalized_url": normalize_url(url),
+        "query": "manual_url",
+        "likely_junk_or_unverified": True,
+        "operation_claim_in_text": False,
+        "score": 0,
+    }
+    try:
+        response = SESSION.get(url, timeout=TIMEOUT, allow_redirects=True)
+        item["availability_http_status"] = response.status_code
+        item["resolved_url"] = response.url
+        if response.status_code != 200:
+            item["availability"] = "unverified"
+            item["availability_note"] = f"HTTP {response.status_code}"
+            return item
+        soup = BeautifulSoup(response.text, "html.parser")
+        title_node = soup.find("h1") or soup.find("meta", property="og:title") or (soup.title if soup.title else None)
+        if title_node:
+            title = title_node.get("content", "") if title_node.name == "meta" else title_node.get_text(" ", strip=True)
+        else:
+            title = ""
+        item["title"] = " ".join(title.split())[:240]
+        item["page_title"] = (soup.title.get_text(" ", strip=True) if soup.title else "")[:180]
+        text = " ".join(soup.get_text(" ", strip=True).split())
+        # Prefer auction-specific current-price text, then structured metadata.
+        price_match = re.search(r"(?:現在|現在価格|現在の価格)\s*[：:]?\s*([\d,]+)\s*円", text)
+        price = int(price_match.group(1).replace(",", "")) if price_match else None
+        if price is None:
+            for node in soup.select('meta[property="product:price:amount"], meta[itemprop="price"], [itemprop="price"]'):
+                raw = node.get("content") or node.get("value") or node.get_text(" ", strip=True)
+                m = re.search(r"\d[\d,]*", str(raw))
+                if m:
+                    price = int(m.group(0).replace(",", ""))
+                    break
+        if price is None:
+            # Last resort: a currency amount close to the visible current-price label.
+            m = re.search(r"(?:現在|現在価格)[^\d]{0,24}([\d,]{4,})\s*円", text)
+            if m:
+                price = int(m.group(1).replace(",", ""))
+        item["price_yen"] = price
+        item["snippet"] = text[:500]
+        item["likely_junk_or_unverified"] = bool(JUNK.search(item["title"] + " " + text[:1200]))
+        item["operation_claim_in_text"] = bool(GOOD.search(item["title"] + " " + text[:1200]))
+        if price is None:
+            item["availability"] = "unverified"
+            item["availability_note"] = "Page loaded, but current price could not be extracted"
+        elif not PS5_RE.search(item["title"]):
+            item["availability"] = "unverified"
+            item["availability_note"] = "Page loaded, but the title did not identify a PS5 console"
+        else:
+            item["availability"] = "fetched_manual_url"
+            item["score"] = 1
+        return item
+    except requests.RequestException as exc:
+        item["availability"] = "unverified"
+        item["availability_error"] = str(exc)[:200]
+        return item
 
 def load_seen():
     try:
@@ -176,6 +262,21 @@ def main():
     seen = load_seen()
     all_items = []
     status = []
+    # Explicit URLs are fetched directly so important listings are not lost when
+    # a marketplace changes its search-result markup.
+    for manual_url in CONFIG.get("manual_urls", []):
+        item = fetch_manual_listing(manual_url)
+        status.append({
+            "source": item.get("source", "Manual URL"),
+            "query": "manual_url",
+            "url": manual_url,
+            "http_status": item.get("availability_http_status"),
+            "availability": item.get("availability"),
+            "note": item.get("availability_note") or item.get("availability_error"),
+        })
+        if item.get("title") and item.get("price_yen") is not None and item.get("availability") == "fetched_manual_url":
+            all_items.append(item)
+        print(f'Manual URL: {item.get("availability")} | {item.get("title", manual_url)} | price={item.get("price_yen")}')
     for source_name, template in SOURCES:
         source_count = 0
         for query in CONFIG["queries"]:
