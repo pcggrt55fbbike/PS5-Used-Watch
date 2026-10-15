@@ -133,7 +133,13 @@ def verify_listing(item):
         soup = BeautifulSoup(response.text, "html.parser")
         page_text = " ".join(soup.get_text(" ", strip=True).split())
         item["page_title"] = (soup.title.get_text(" ", strip=True) if soup.title else "")[:180]
-        if SOLD.search(page_text) or SOLD.search(item["page_title"]):
+        # Some marketplaces expose sold state only in HTML attributes / embedded JSON.
+        sold_html = re.search(
+            r"(sold.?out|sold_out|isSold|is_sold|soldOut|売り切れ|取引完了|オークション終了|出品終了|購入できません)",
+            response.text,
+            re.I,
+        )
+        if SOLD.search(page_text) or SOLD.search(item["page_title"]) or sold_html:
             item["availability"] = "sold_or_ended"
             return False
         marker = BUY_MARKERS.get(item["source"])
